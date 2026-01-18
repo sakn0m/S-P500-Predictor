@@ -25,19 +25,12 @@ def train_test_split_chronological(X, y, test_size=0.2):
     
     return X_train, X_test, y_train, y_test
 
-def tune_and_train_model(X_train, y_train, model_type='xgboost'):
+def tune_and_train_model(X_train, y_train, model_type='xgboost', verbose=True):
     """
     Tunes hyperparameters using Walk-Forward Validation and trains the best model.
-    
-    Args:
-        X_train: Training features
-        y_train: Training labels
-        model_type (str): 'xgboost' (default)
-        
-    Returns:
-        Trained model with best parameters
     """
-    print(f"Tuning and Training {model_type} model on {len(X_train)} samples...")
+    if verbose:
+        print(f"Tuning and Training {model_type} model on {len(X_train)} samples...")
     
     # TimeSeriesSplit for Walk-Forward Validation
     tscv = TimeSeriesSplit(n_splits=5)
@@ -72,7 +65,9 @@ def tune_and_train_model(X_train, y_train, model_type='xgboost'):
         raise ValueError("Unsupported model type. Choose 'xgboost' or 'random_forest'.")
     
     # Randomized Search
-    print("Running RandomizedSearchCV...")
+    if verbose:
+        print("Running RandomizedSearchCV...")
+    
     search = RandomizedSearchCV(
         model,
         param_distributions=param_grid,
@@ -80,14 +75,15 @@ def tune_and_train_model(X_train, y_train, model_type='xgboost'):
         scoring='precision', # Focus on precision (minimizing false positives) for trading
         cv=tscv,
         n_jobs=-1,
-        verbose=1,
+        verbose=1 if verbose else 0,
         random_state=42
     )
     
     search.fit(X_train, y_train)
     
-    print(f"Best Parameters: {search.best_params_}")
-    print(f"Best Validation Score: {search.best_score_:.4f}")
+    if verbose:
+        print(f"Best Parameters: {search.best_params_}")
+        print(f"Best Validation Score: {search.best_score_:.4f}")
     
     best_model = search.best_estimator_
     

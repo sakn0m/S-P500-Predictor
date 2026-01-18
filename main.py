@@ -102,11 +102,16 @@ def run_pipeline():
     # -------------------------------------------------------------------------
     # PART 2: Constituents (Alpha Prediction)
     # -------------------------------------------------------------------------
-    print(f"\n>> Analyzing Constituents for Alpha & Health...")
+    # -------------------------------------------------------------------------
+    # PART 2: Constituents (Alpha Prediction)
+    # -------------------------------------------------------------------------
+    print(f"\n>> Analyzing Constituents for Alpha & Health (Deep Dive)...")
     from data_loader import get_sentiment, get_fundamentals
+    from tqdm import tqdm
     
-    for stock in CONSTITUENTS:
-        print(f"Processing {stock}...")
+    # Wrap iteration with tqdm for progress bar
+    for stock in tqdm(CONSTITUENTS, desc="Optimizing Models", unit="ticker"):
+        # print(f"Processing {stock}...") # Removed to keep progress bar clean
         try:
             # 1. AI ML Loop
             df_stk = fetch_data([stock], period_years=10)
@@ -117,8 +122,8 @@ def run_pipeline():
             
             if len(X_train_s) < 100: continue
             
-            # Use faster train for the loop unless tuning is strictly needed every time
-            model_stk = train_model(X_train_s, y_train_s, model_type='xgboost')
+            # PHASE 3 UPGRADE: Full Tuning for every stock
+            model_stk = tune_and_train_model(X_train_s, y_train_s, model_type='xgboost', verbose=False)
             
             latest_X_stk = feat_stk.loc[feat_stk.index[-1], feature_cols].to_frame().T
             ai_proba = model_stk.predict_proba(latest_X_stk)[0][1]
@@ -155,7 +160,8 @@ def run_pipeline():
             })
             
         except Exception as e:
-            print(f"Error processing {stock}: {e}")
+            # print(f"Error processing {stock}: {e}") # Suppress error noise
+            pass
 
     # -------------------------------------------------------------------------
     # PART 3: Dashboard
