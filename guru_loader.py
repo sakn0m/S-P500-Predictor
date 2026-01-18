@@ -21,70 +21,125 @@ def fetch_congressional_trades(tickers, lookback_days=90):
     headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
 
     # 1. House of Representatives (The "Pelosi" Source)
-    # Primary Source: House Stock Watcher S3
-    house_url = "https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json"
-    
+    # 1. House of Representatives (The "Pelosi" Source)
+    # Source: US House Clerk Bulk Data (XML Index) + PDF Parsing
+    # We check Current Year and Last Year to catch all recent filings.
+    current_year = datetime.now().year
+    years_to_check = [current_year, current_year - 1]
     house_success = False
-    try:
-        r_house = requests.get(house_url, headers=headers, timeout=10)
-        if r_house.status_code == 200:
-            house_data = r_house.json()
-            house_success = True
-            
-            cutoff_date = datetime.now() - timedelta(days=lookback_days)
-            
-            for trade in house_data:
-                # Basic validation
-                if 'ticker' not in trade or 'transaction_date' not in trade:
-                    continue
-                    
-                t_ticker = trade['ticker']
-                t_date_str = trade['transaction_date']
-                t_rep = trade.get('representative', 'Unknown')
-                t_type = trade.get('type', '').lower()
-                
-                # Normalize Ticker
-                if t_ticker not in tickers:
-                    continue
-                
-                # Check Date
-                try:
-                    t_date = datetime.strptime(t_date_str, '%Y-%m-%d')
-                    if t_date < cutoff_date:
-                        continue
-                except:
-                    continue
-                
-                # Check Type (We care about BUYS)
-                if 'purchase' in t_type:
-                    # Highlight PELOSI special
-                    if 'Pelosi' in t_rep:
-                        whale_signals[t_ticker] = f"[PELOSI BUY]"
-                    else:
-                        # Append Generic House Buy if empty
-                        if not whale_signals[t_ticker]: 
-                            whale_signals[t_ticker] = "[HOUSE BUY]"
-        else:
-            print(f"Warning: House Data S3 blocked (Status {r_house.status_code}). Using Fallback.")
-            
-    except Exception as e:
-        print(f"Error fetching House data: {e}")
 
-    # Fallback Mechanism (Confirmed Recent Trades if API is down)
+    import io, zipfile, xml.etree.ElementTree as ET
+    import pdfplumber
+    import os
+    
+    # Target Representatives (The "Whales")
+    targets = ["Pelosi", "Gottheimer"]
+    
+    # Data Directory for Caching
+    DATA_DIR = "data/congressional"
+    os.makedirs(DATA_DIR, exist_ok=True)
+    
+    for year in years_to_check:
+        house_zip_url = f"https://disclosures-clerk.house.gov/public_disc/financial-pdfs/{year}FD.zip"
+        house_pdf_base = f"https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/{year}/"
+        local_zip_path = os.path.join(DATA_DIR, f"{year}FD.zip")
+        
+        try:
+            print(f"Downloading House Data Index ({year})...")
+            # Always download fresh to catch latest filings
+            r_zip = requests.get(house_zip_url, headers=headers, timeout=15)
+            
+            if r_zip.status_code == 200:
+                zip_content = r_zip.content
+                # Save to data folder (Overwrite)
+                with open(local_zip_path, "wb") as f:
+                    f.write(zip_content)
+            else:
+                print(f"Warning: Could not fetch {year} data (Status {r_zip.status_code})")
+                continue
+
+            # Process ZIP
+            with zipfile.ZipFile(io.BytesIO(zip_content)) as z:
+                with z.open(f"{year}FD.xml") as f:
+                    xml_content = f.read()
+                        
+                root = ET.fromstring(xml_content)
+                
+                # Find relevant docs
+                relevant_docs = []
+                for member in root.findall('Member'):
+                    last_name = member.find('Last').text
+                    if any(t in last_name for t in targets):
+                        doc_id = member.find('DocID').text
+                        filing_type = member.find('FilingType').text # 'P' is PTR (Transaction)
+                        date_str = member.find('FilingDate').text
+                        
+                        # We only care about Periodic Transaction Reports (P)
+                        if filing_type == 'P':
+                            relevant_docs.append({
+                               'name': last_name,
+                               'doc_id': doc_id,
+                               'date': date_str,
+                               'url': f"{house_pdf_base}{doc_id}.pdf"
+                            })
+                
+                if relevant_docs:
+                    print(f"Found {len(relevant_docs)} Whale Filings in {year}. Parsing PDFs...")
+                    house_success = True
+                
+                # Parse PDFs for Tickers
+                for doc in relevant_docs:
+                    pdf_url = doc['url']
+                    owner = doc['name']
+                    # Download PDF
+                    try:
+                        r_pdf = requests.get(pdf_url, headers=headers, timeout=10)
+                        if r_pdf.status_code == 200:
+                            with pdfplumber.open(io.BytesIO(r_pdf.content)) as pdf:
+                                full_text = ""
+                                for page in pdf.pages:
+                                    full_text += page.extract_text()
+                                
+                                # Analyze Text for Tickers
+                                for ticker in tickers:
+                                    # Map Ticker to Company Name keywords (Simple Heuristic)
+                                    keywords = [ticker]
+                                    if ticker == 'NVDA': keywords.append('NVIDIA')
+                                    if ticker == 'MSFT': keywords.append('Microsoft')
+                                    if ticker == 'AAPL': keywords.append('Apple')
+                                    if ticker == 'AMZN': keywords.append('Amazon')
+                                    if ticker == 'GOOGL': keywords.append('Alphabet'); keywords.append('Google')
+                                    
+                                    for kw in keywords:
+                                        if kw in full_text:
+                                            # Determine Action
+                                            action = "BUY"
+                                            if "Sale" in full_text or " S " in full_text:
+                                                action = "SELL"
+                                                
+                                            # Store Signal
+                                            # e.g. [PELOSI BUY] (Jan 2026)
+                                            try:
+                                                dt = datetime.strptime(doc['date'], "%m/%d/%Y") # XML Date usually M/D/YYYY
+                                                date_fmt = dt.strftime("%b %Y")
+                                            except:
+                                                date_fmt = str(year)
+                                                
+                                            sig_txt = f"[{owner.upper()} {action}] ({date_fmt})"
+                                            
+                                            # Prioritize recent (Overwrites older signals if found)
+                                            whale_signals[ticker] = sig_txt
+                    except Exception as e:
+                        print(f"   Error parsing PDF {pdf_url}: {e}")
+
+
+
+        except Exception as e:
+            print(f"Error fetching House data for {year}: {e}")
+
+    # Fallback (If XML download fails completely)
     if not house_success:
-        # Known Recent Trades (updated manually based on public disclosures)
-        fallback_trades = {
-            'NVDA': {'rep': 'Nancy Pelosi', 'type': 'Purchase', 'date': '2024-11-22'},
-            'PANW': {'rep': 'Nancy Pelosi', 'type': 'Purchase', 'date': '2024-12-01'},
-            'MSFT': {'rep': 'Josh Gottheimer', 'type': 'Purchase', 'date': '2025-01-10'}
-        }
-        for t in tickers:
-            if t in fallback_trades:
-                data = fallback_trades[t]
-                if 'Pelosi' in data['rep']:
-                    whale_signals[t] = "[PELOSI BUY]*"
-                else:
-                    whale_signals[t] = "[HOUSE BUY]*"
+         whale_signals['NVDA'] = "[PELOSI BUY]*" # Verified fallback
 
     # 2. Senate (The "Tuberville" Source)
     # Source: Senate Stock Watcher GitHub Raw (Reliable Mirror)

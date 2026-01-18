@@ -5,3 +5,6 @@ scikit-learn
 xgboost
 matplotlib
 ta
+requests
+pdfplumber
+vaderSentiment
