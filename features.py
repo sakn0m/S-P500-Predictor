@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import ta
 from ta.momentum import RSIIndicator
 from ta.trend import MACD, SMAIndicator
 from ta.volatility import BollingerBands
@@ -103,8 +104,34 @@ def add_technical_indicators(df):
     feature_df['Stoch_D'] = stoch.stoch_signal()
 
     # 6. Returns & Macro Changes
+    # 6. Returns & Macro Changes
     feature_df['Daily_Return'] = close.pct_change()
     
+    # --- PHASE 4: INSTITUTIONAL UPGRADE ---
+    if 'High' in df.columns and 'Low' in df.columns and 'Open' in df.columns:
+        # 1. Garman-Klass Volatility (More efficient than Close-to-Close volatility)
+        # Formula: 0.5 * ln(High/Low)^2 - (2ln(2)-1) * ln(Close/Open)^2
+        # We need check for zeros/negatives inside log, although prices should be positive.
+        log_hl = np.log(high / low)**2
+        log_co = np.log(close / df['Open'])**2
+        feature_df['Garman_Klass'] = np.sqrt(0.5 * log_hl - (2*np.log(2)-1) * log_co)
+
+        # 2. Keltner Channels (Trend Following)
+        # EMA 20 +/- 2 * ATR
+        # We need ATR calculated above (feature_df['ATR'])
+        kc_mid = ta.trend.ema_indicator(close, window=20)
+        kc_upper = kc_mid + (2 * feature_df['ATR'])
+        kc_lower = kc_mid - (2 * feature_df['ATR'])
+        feature_df['KC_Upper_Dist'] = (close - kc_upper) / close
+        feature_df['KC_Lower_Dist'] = (close - kc_lower) / close
+    
+    # 3. Volume Oscillator (Flow)
+    if 'Volume' in df.columns:
+        feature_df['Volume_Osc'] = ta.momentum.PercentageVolumeOscillator(df['Volume']).pvo()
+    
+    # 4. SMA Distances (Explicit override if not just returning)
+    # (Already calculated above, but ensuring distances are robust)
+
     if 'VIX' in feature_df.columns:
         feature_df['VIX_Change'] = feature_df['VIX'].pct_change()
     if 'US10Y' in feature_df.columns:

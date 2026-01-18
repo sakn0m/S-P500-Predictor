@@ -71,7 +71,7 @@ def tune_and_train_model(X_train, y_train, model_type='xgboost', verbose=True):
     search = RandomizedSearchCV(
         model,
         param_distributions=param_grid,
-        n_iter=20,  # Number of parameter settings that are sampled
+        n_iter=50,  # PHASE 4: Increased from 20 to 50 for "Institutional" precision
         scoring='precision', # Focus on precision (minimizing false positives) for trading
         cv=tscv,
         n_jobs=-1,

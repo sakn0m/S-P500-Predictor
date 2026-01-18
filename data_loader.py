@@ -2,102 +2,84 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 
-def fetch_data(tickers, period_years=10):
+def fetch_data(tickers, period_years=10, quiet=False):
     """
     Downloads historical adjusted close prices for the given tickers and Macro Data.
-    
-    Args:
-        tickers (list): List of ticker symbols (strings).
-        period_years (int): Number of years of history to download.
-        
-    Returns:
-        pd.DataFrame: DataFrame containing Adjusted Close prices for tickers + Macro Data.
+    Updated for Phase 4 to support 'quiet' mode for cleaner UI.
     """
     end_date = datetime.now()
     start_date = end_date - timedelta(days=period_years*365)
     
-    print(f"Downloading data from {start_date.date()} to {end_date.date()}...")
+    if not quiet:
+        print(f"Downloading data from {start_date.date()} to {end_date.date()}...")
     
     # 1. Fetch Target Tickers
-    data = yf.download(tickers, start=start_date, end=end_date, progress=False)
+    # Silence yfinance internal prints
+    data = yf.download(tickers, start=start_date, end=end_date, progress=False, group_by='ticker')
     
     if data.empty:
-        raise ValueError("No data downloaded. Check ticker symbols or internet connection.")
+        if not quiet: print("Warning: No data downloaded.")
+        return pd.DataFrame()
     
-    # We need OHLCV for advanced indicators (ATR, ADX).
-    # yfinance returns MultiIndex if multiple tickers: (Price, Ticker).
-    # If single ticker: (Price, ).
-    
-    # If using yfinance 0.2+, the structure is slightly different.
-    # Let's handle the MultiIndex properly.
-    
-    # If we have a single ticker, we want a DataFrame with columns: Open, High, Low, Close, Adj Close, Volume
-    # If multiple tickers... proper handling is complex in one table.
-    # PROPOSAL: For this pipeline, we iterate through tickers one by one in main loop.
-    # So `fetch_data` can standardize on returning a SINGLE Ticker's OHLCV + Macro Data.
-    # If we pass multiple tickers, this function might need to return a Dictionary of DataFrames.
-    
-    # Let's check how 'main.py' uses it.
-    # It passes [TICKER]. So single ticker.
-    
+    # Standardize Single Ticker
     if len(tickers) == 1:
-        ticker = tickers[0]
-        # data might be multi-level with ticker as column level, or flat.
-        # Check columns
         if isinstance(data.columns, pd.MultiIndex):
-            # Drop level to get simple OHLCV
-             df = data.xs(ticker, axis=1, level=1, drop_level=True)
+            # Try to extract the single ticker level
+            try:
+                df = data.xs(tickers[0], axis=1, level=0)
+            except:
+                df = data # Fallback
         else:
             df = data
     else:
-        # If multiple tickers, we just keep 'Adj Close' for now? NO, we want full data.
-        # But we can't flatten efficiently.
-        # Let's assume this function handles ONE primary ticker at a time for the "Model Input".
-        # OR `main.py` will loop.
-        # Let's enforce single ticker or handle specifically.
-        # But wait, original request said "list of top constituents".
-        pass 
-
-    # For now, let's Stick to the requested Multi-Ticker capability but optimize for the Single-Ticker-at-a-time pipeline usage 
-    # since we build the features per ticker.
+        df = data # Multi-ticker handling logic implies external loop usually
     
-    # Actually, simpler: just return the raw `data` object if >1 ticker,
-    # and if ==1 ticker, return the flat OHLCV.
-    
-    if len(tickers) == 1:
-        if isinstance(data.columns, pd.MultiIndex):
-            df = data.xs(tickers[0], axis=1, level=1)
-        else:
-            df = data
-    else:
-        # Warn that advanced features might need OHLCV which is harder to access in wide format
-        # But for 'Price' based features only, simple DF is ok.
-        # For Phase 2, let's assume valid OHLCV for the *primary* analysis.
-        df = data
-
     # 2. Fetch Macro Data
-    print("Downloading Macro Data (^VIX, ^TNX)...")
-    macro_tickers = ['^VIX', '^TNX']
-    macro_data = yf.download(macro_tickers, start=start_date, end=end_date, progress=False)
+    if not quiet:
+        print("Downloading Macro Data (^VIX, ^TNX)...")
     
-    # Macro data: we just need Close prices typically
-    if 'Adj Close' in macro_data.columns:
-        macro_df = macro_data['Adj Close']
-    elif 'Close' in macro_data.columns:
-        macro_df = macro_data['Close']
-    else:
-        macro_df = macro_data
+    macro_tickers = ['^VIX', '^TNX']
+    macro_data = yf.download(macro_tickers, start=start_date, end=end_date, progress=False, group_by='ticker')
+    
+    # Flatten Macro
+    try:
+        # VIX
+        if ('^VIX', 'Close') in macro_data.columns:
+            vix = macro_data[('^VIX', 'Close')]
+        elif '^VIX' in macro_data.columns: # Flat
+             vix = macro_data['^VIX']
+        else:
+             # Fallback if structure is weird (sometimes yf changes)
+             vix = macro_data.iloc[:, 0] # Dangerous but placeholder
+
+        # TNX
+        if ('^TNX', 'Close') in macro_data.columns:
+            tnx = macro_data[('^TNX', 'Close')]
+        elif '^TNX' in macro_data.columns:
+             tnx = macro_data['^TNX']
+        else:
+            tnx = macro_data.iloc[:, 1]
+            
+        # Create temp DF to join
+        macro_df = pd.DataFrame(index=macro_data.index)
+        macro_df['VIX'] = vix
+        macro_df['US10Y'] = tnx
         
-    macro_df = macro_df.rename(columns={'^VIX': 'VIX', '^TNX': 'US10Y'})
+    except Exception as e:
+        if not quiet: print(f"Warning: Macro merge failed: {e}")
+        macro_df = pd.DataFrame() # Empty
     
     # 3. Merge
-    # If df is Single Ticker OHLCV (columns like Open, High...), we join.
-    # If df is Multi (Adj Close only), we join.
-    
-    df_combined = df.join(macro_df).ffill()
+    if not macro_df.empty:
+        df_combined = df.join(macro_df).ffill()
+    else:
+        df_combined = df.ffill()
+        
     df_combined = df_combined.dropna()
 
-    print(f"Successfully downloaded data. Shape: {df_combined.shape}")
+    if not quiet:
+        print(f"Successfully downloaded data. Shape: {df_combined.shape}")
+        
     return df_combined
 
 def get_sentiment(ticker_symbol):

@@ -113,8 +113,8 @@ def run_pipeline():
     for stock in tqdm(CONSTITUENTS, desc="Optimizing Models", unit="ticker"):
         # print(f"Processing {stock}...") # Removed to keep progress bar clean
         try:
-            # 1. AI ML Loop
-            df_stk = fetch_data([stock], period_years=10)
+            # 1. AI ML Loop (Quiet Mode)
+            df_stk = fetch_data([stock], period_years=10, quiet=True)
             feat_stk = add_technical_indicators(df_stk)
             feat_stk = create_targets(feat_stk, index_returns=index_returns_full)
             X_stk, y_stk = prepare_features(feat_stk)
