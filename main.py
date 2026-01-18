@@ -107,7 +107,11 @@ def run_pipeline():
     # -------------------------------------------------------------------------
     print(f"\n>> Analyzing Constituents for Alpha & Health (Deep Dive)...")
     from data_loader import get_sentiment, get_fundamentals
+    from guru_loader import fetch_congressional_trades
     from tqdm import tqdm
+    
+    # 1. Fetch Whale Data (Phase 5)
+    whale_map = fetch_congressional_trades(CONSTITUENTS)
     
     # Wrap iteration with tqdm for progress bar
     for stock in tqdm(CONSTITUENTS, desc="Optimizing Models", unit="ticker"):
@@ -149,14 +153,18 @@ def run_pipeline():
             action = "STRONG BUY" if composite > 0.6 else ("OVERWEIGHT" if composite > 0.52 else "HOLD/NEUTRAL")
             if composite < 0.45: action = "UNDERWEIGHT"
             
+            # Retrieve Whale Signal
+            whale_txt = whale_map.get(stock, "")
+            
             dashboard_data.append({
                 "Ticker": stock,
                 "Type": "Stock",
                 "Signal": action,
-                "Composite": f"{composite:.1%}",
+                "Strength": f"{composite:.1%}",
                 "AI": f"{ai_proba:.0%}",
                 "Sent": f"{norm_sentiment:.0%}",
-                "Fund": f"{health:.0%}"
+                "Fund": f"{health:.0%}",
+                "Whale": whale_txt
             })
             
         except Exception as e:
@@ -169,17 +177,18 @@ def run_pipeline():
     print("\n" + "="*80)
     print("                 TRADING SIGNAL DASHBOARD (SENTIMENT & FUNDAMENTALS)      ")
     print("="*80)
-    print(f"{'TICKER':<10} | {'SIGNAL':<15} | {'STRENGTH':<10} | {'AI':<6} | {'SENT':<6} | {'FUND':<6}")
+    print(f"{'TICKER':<10} | {'SIGNAL':<15} | {'STRENGTH':<10} | {'AI':<6} | {'SENT':<6} | {'FUND':<6} | {'WHALE':<15}")
     print("-" * 80)
     
     for item in dashboard_data:
-        # Index doesn't have funds/sent in this simple version
         ai = item.get('AI', '--')
         sent = item.get('Sent', '--')
         fund = item.get('Fund', '--')
-        comp = item.get('Composite', item.get('Confidence', '--'))
+        # Compatibility with Index which might key it differently or we normalize above
+        comp = item.get('Strength', item.get('Confidence', '--'))
+        whale = item.get('Whale', '')
         
-        print(f"{item['Ticker']:<10} | {item['Signal']:<15} | {comp:<10} | {ai:<6} | {sent:<6} | {fund:<6}")
+        print(f"{item['Ticker']:<10} | {item['Signal']:<15} | {comp:<10} | {ai:<6} | {sent:<6} | {fund:<6} | {whale:<15}")
     print("-" * 80)
     print("\n=== Pipeline Complete ===")
 
