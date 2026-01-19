@@ -25,76 +25,89 @@ def train_test_split_chronological(X, y, test_size=0.2):
     
     return X_train, X_test, y_train, y_test
 
-def tune_and_train_model(X_train, y_train, model_type='xgboost', verbose=True):
+from sklearn.ensemble import VotingClassifier
+
+def tune_and_train_model(X_train, y_train, model_type='ensemble', verbose=True):
     """
-    Tunes hyperparameters using Walk-Forward Validation and trains the best model.
+    Trains a Deep Ensemble Voting Classifier (XGB + RF + GB).
+    Step 1: Tune XGBoost for best hyperparameters.
+    Step 2: Combine with Random Forest and Gradient Boosting.
+    Step 3: Train Voting Classifier (Soft Voting).
     """
     if verbose:
-        print(f"Tuning and Training {model_type} model on {len(X_train)} samples...")
+        print(f"Training Deep Ensemble AI on {len(X_train)} samples...")
     
-    # TimeSeriesSplit for Walk-Forward Validation
+    # TimeSeriesSplit for Validation
     tscv = TimeSeriesSplit(n_splits=5)
     
-    if model_type == 'xgboost':
-        model = XGBClassifier(
-            use_label_encoder=False,
-            eval_metric='logloss',
-            random_state=42
-        )
-        
-        # Hyperparameter Grid
-        param_grid = {
-            'n_estimators': [100, 200, 300],
-            'learning_rate': [0.01, 0.05, 0.1, 0.2],
-            'max_depth': [3, 5, 7, 9],
-            'subsample': [0.6, 0.8, 1.0],
-            'colsample_bytree': [0.6, 0.8, 1.0],
-            'gamma': [0, 0.1, 0.2]
-        }
-        
-    elif model_type == 'random_forest':
-        model = RandomForestClassifier(random_state=42)
-        
-        param_grid = {
-            'n_estimators': [100, 200, 300],
-            'max_depth': [None, 10, 20, 30],
-            'min_samples_split': [2, 5, 10],
-            'min_samples_leaf': [1, 2, 4]
-        }
-    else:
-        raise ValueError("Unsupported model type. Choose 'xgboost' or 'random_forest'.")
-    
-    # Randomized Search
-    if verbose:
-        print("Running RandomizedSearchCV...")
-    
-    search = RandomizedSearchCV(
-        model,
-        param_distributions=param_grid,
-        n_iter=50,  # PHASE 4: Increased from 20 to 50 for "Institutional" precision
-        scoring='precision', # Focus on precision (minimizing false positives) for trading
-        cv=tscv,
-        n_jobs=-1,
-        verbose=1 if verbose else 0,
+    # --- Component 1: XGBoost (Tuned) ---
+    xgb_base = XGBClassifier(
+        use_label_encoder=False,
+        eval_metric='logloss',
         random_state=42
     )
     
+    # Quick Tuning Grid
+    xgb_grid = {
+        'n_estimators': [100, 200, 300],
+        'learning_rate': [0.01, 0.05, 0.1],
+        'max_depth': [3, 5, 7],
+        'min_child_weight': [1, 3],
+        'subsample': [0.8, 1.0],
+        'colsample_bytree': [0.8, 1.0]
+    }
+    
+    if verbose: print(">> Tuning XGBoost Component...")
+    search = RandomizedSearchCV(
+        xgb_base,
+        param_distributions=xgb_grid,
+        n_iter=15, # Fast but effective
+        scoring='precision', # High precision preferred for trading
+        cv=tscv,
+        n_jobs=-1,
+        verbose=0,
+        random_state=42
+    )
     search.fit(X_train, y_train)
+    best_xgb = search.best_estimator_
     
-    if verbose:
-        print(f"Best Parameters: {search.best_params_}")
-        print(f"Best Validation Score: {search.best_score_:.4f}")
+    if verbose: print(f"   Best XGB Params: {search.best_params_}")
     
-    best_model = search.best_estimator_
+    # --- Component 2: Random Forest (Bagging) ---
+    # Robust default parameters
+    rf_model = RandomForestClassifier(
+        n_estimators=200,
+        max_depth=10,
+        min_samples_split=5,
+        random_state=42
+    )
     
-    return best_model
+    # --- Component 3: Gradient Boosting (sklearn) ---
+    gb_model = GradientBoostingClassifier(
+        n_estimators=150,
+        learning_rate=0.05,
+        max_depth=4,
+        random_state=42
+    )
+    
+    # --- Ensemble: Voting Classifier ---
+    if verbose: print(">> Constructing Deep Voting Ensemble...")
+    
+    ensemble = VotingClassifier(
+        estimators=[
+            ('xgb', best_xgb),
+            ('rf', rf_model),
+            ('gb', gb_model)
+        ],
+        voting='soft', # Probabilities are averaged
+        weights=[2, 1, 1] # Weight XGB higher as it's tuned
+    )
+    
+    # Train the Ensemble
+    ensemble.fit(X_train, y_train)
+    
+    return ensemble
 
 def train_model(X_train, y_train, model_type='xgboost'):
-    """Trains without tuning for speed."""
-    if model_type == 'xgboost':
-        model = XGBClassifier(n_estimators=100, learning_rate=0.1, max_depth=5, 
-                              use_label_encoder=False, eval_metric='logloss', random_state=42)
-    else:
-        model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
-    model.fit(X_train, y_train)
-    return model
+    """Deprecated: Use tune_and_train_model for ensemble."""
+    return tune_and_train_model(X_train, y_train, verbose=False)

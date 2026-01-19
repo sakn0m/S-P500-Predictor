@@ -137,6 +137,34 @@ def add_technical_indicators(df):
     if 'US10Y' in feature_df.columns:
         feature_df['US10Y_Change'] = feature_df['US10Y'].pct_change()
 
+    # --- PHASE 5: "DEEP AI" COMPLEXITY UPGRADE ---
+    
+    # 1. Price Gaps (Pre-market moves)
+    # Gap = (Open - Prev_Close) / Prev_Close
+    if 'Open' in df.columns:
+        prev_close = close.shift(1)
+        feature_df['Gap'] = (df['Open'] - prev_close) / prev_close
+    
+    # 2. Cyclical Date Features (Seasonality)
+    # Markets have weekly and monthly seasonality
+    # Sine/Cosine encoding to preserve cyclical nature (Dec -> Jan is close)
+    dates = df.index
+    feature_df['Month_Sin'] = np.sin(2 * np.pi * dates.month/12)
+    feature_df['Month_Cos'] = np.cos(2 * np.pi * dates.month/12)
+    feature_df['DayOfWeek_Sin'] = np.sin(2 * np.pi * dates.dayofweek/7)
+    
+    # 3. Lagged Returns (Memory/Autoregression)
+    # Explicitly feed recent returns to the model
+    feature_df['Ret_Lag1'] = feature_df['Daily_Return'].shift(1)
+    feature_df['Ret_Lag2'] = feature_df['Daily_Return'].shift(2)
+    feature_df['Ret_Lag3'] = feature_df['Daily_Return'].shift(3)
+    feature_df['Ret_Lag5'] = feature_df['Daily_Return'].shift(5) # Weekly momentum
+    
+    # 4. Interaction Terms (Conditional Logic)
+    # Volatility * Trend: High Vol + High Trend might mean crash or boom
+    if 'ATR' in feature_df.columns and 'RSI' in feature_df.columns:
+        feature_df['Vol_x_Mom'] = feature_df['ATR'] * feature_df['RSI']
+        
     return feature_df
 
 def create_targets(df, index_returns=None):

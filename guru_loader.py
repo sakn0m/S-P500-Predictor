@@ -190,6 +190,78 @@ def fetch_congressional_trades(tickers, lookback_days=90):
 
     return whale_signals
 
+def fetch_insider_trades(tickers):
+    """
+    Fetches recent insider transactions (last 6 months) using yfinance.
+    Detects Cluster Buys or CEO/CFO Purchses.
+    """
+    import yfinance as yf
+    print("Fetching Insider Trading Data (Corporate Whales)...")
+    
+    insider_signals = {t: "" for t in tickers}
+    
+    for ticker in tickers:
+        try:
+            t = yf.Ticker(ticker)
+            # Fetch Insider Transactions
+            # Note: yfinance often returns a DataFrame with cols: ['Shares', 'Value', 'Text', 'Start Date'] etc.
+            # or ['Insider', 'Position', 'Date', 'Transaction', 'Value', 'Shares']
+            df = t.insider_transactions
+            
+            if df is None or df.empty:
+                continue
+                
+            # Filter for recent buys (approx last 6 months)
+            # Dates in yf are usually strings or timestamps
+            # We'll just check the top 10 rows as they are usually most recent
+            recent_activity = df.head(10)
+            
+            purchases = []
+            
+            for index, row in recent_activity.iterrows():
+                # Text parsing to find "Purchase"
+                # The structure varies, but usually column 'Text' contains description like "Purchase at price..."
+                # or column 'Transaction' says "Purchase"
+                
+                txt = str(row).lower()
+                is_buy = "purchase" in txt or "buy" in txt or "grant" in txt # Grants are good too often
+                
+                # We prioritize "Open Market Purchase" which is a strong signal
+                if "sale" in txt:
+                    continue
+                    
+                if is_buy:
+                    # Capture who
+                    # Usually 'Insider' column exists?
+                    who = "Insider"
+                    if 'Insider' in row: who = row['Insider']
+                    elif 'Name' in row: who = row['Name']
+                    
+                    # Check Date
+                    date_str = ""
+                    if 'Date' in row: date_str = str(row['Date'])
+                    elif 'Start Date' in row: date_str = str(row['Start Date'])
+                    
+                    # Simple heuristic: If multiple distinct insiders bought, it's a cluster
+                    purchases.append(who)
+
+            if len(purchases) >= 2:
+                insider_signals[ticker] = f"[CLUSTER BUY: {len(purchases)} Insiders]"
+            elif len(purchases) == 1:
+                # Check if C-Suite
+                who = purchases[0].lower()
+                if "ceo" in who or "chief executive" in who:
+                     insider_signals[ticker] = "[CEO BUY]"
+                elif "cfo" in who:
+                     insider_signals[ticker] = "[CFO BUY]"
+                elif "director" in who:
+                     insider_signals[ticker] = "[DIRECTOR BUY]"
+            
+        except Exception as e:
+            # print(f"Error fetching insiders for {ticker}: {e}")
+            pass
+            
+    return insider_signals
 if __name__ == "__main__":
     # Test
     test_tickers = ['NVDA', 'MSFT', 'AAPL']

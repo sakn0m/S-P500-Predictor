@@ -107,11 +107,12 @@ def run_pipeline():
     # -------------------------------------------------------------------------
     print(f"\n>> Analyzing Constituents for Alpha & Health (Deep Dive)...")
     from data_loader import get_sentiment, get_fundamentals
-    from guru_loader import fetch_congressional_trades
+    from guru_loader import fetch_congressional_trades, fetch_insider_trades
     from tqdm import tqdm
     
     # 1. Fetch Whale Data (Phase 5)
     whale_map = fetch_congressional_trades(CONSTITUENTS)
+    insider_map = fetch_insider_trades(CONSTITUENTS)
     
     # Wrap iteration with tqdm for progress bar
     for stock in tqdm(CONSTITUENTS, desc="Optimizing Models", unit="ticker"):
@@ -127,7 +128,7 @@ def run_pipeline():
             if len(X_train_s) < 100: continue
             
             # PHASE 3 UPGRADE: Full Tuning for every stock
-            model_stk = tune_and_train_model(X_train_s, y_train_s, model_type='xgboost', verbose=False)
+            model_stk = tune_and_train_model(X_train_s, y_train_s, model_type='ensemble', verbose=False)
             
             latest_X_stk = feat_stk.loc[feat_stk.index[-1], feature_cols].to_frame().T
             ai_proba = model_stk.predict_proba(latest_X_stk)[0][1]
@@ -155,7 +156,16 @@ def run_pipeline():
             
             # Retrieve Whale Signal
             whale_txt = whale_map.get(stock, "")
+            insider_txt = insider_map.get(stock, "")
             
+            # Combine Whale Texts
+            combined_whale = f"{whale_txt} {insider_txt}".strip()
+            
+            # Check for strong insider signal to boost composite
+            if "CLUSTER" in insider_txt or "CEO" in insider_txt:
+                 composite += 0.15
+                 action = "STRONG BUY" if composite > 0.6 else action
+
             dashboard_data.append({
                 "Ticker": stock,
                 "Type": "Stock",
@@ -164,7 +174,7 @@ def run_pipeline():
                 "AI": f"{ai_proba:.0%}",
                 "Sent": f"{norm_sentiment:.0%}",
                 "Fund": f"{health:.0%}",
-                "Whale": whale_txt
+                "Whale": combined_whale
             })
             
         except Exception as e:
