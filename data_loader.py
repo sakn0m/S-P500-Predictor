@@ -104,7 +104,30 @@ def get_sentiment(ticker_symbol):
             
             # VADER compound score
             vs = analyzer.polarity_scores(text)
-            scores.append(vs['compound'])
+            comp_score = vs['compound']
+            
+            # --- ASYMMETRIC SENTIMENT LOGIC (The "Risk Filter") ---
+            # Bad news is real. "Good news with a but" is noise.
+            
+            risk_words = [
+                'uncertainty', 'shock', 'strain', 'plunge', 'investigation', 
+                'downgrade', 'miss', 'cut', 'headwinds', 'pressure', 'concern',
+                'weakness', 'caution', 'volatility', 'risk'
+            ]
+            
+            text_lower = text.lower()
+            
+            # Check for risk
+            has_risk = any(w in text_lower for w in risk_words)
+            
+            if comp_score > 0 and has_risk:
+                # Optimized logic: "Good news with a 'but' is effectively Neutral."
+                # We neutralize it to 0.0 to strip out the false optimism.
+                comp_score = 0.0
+            
+            # Note: Negative scores remain untouched (Bad news is respected).
+            
+            scores.append(comp_score)
             
         return sum(scores) / len(scores) if scores else 0.0
     except:

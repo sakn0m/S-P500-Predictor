@@ -110,25 +110,46 @@ def fetch_congressional_trades(tickers, lookback_days=90):
                                     if ticker == 'AMZN': keywords.append('Amazon')
                                     if ticker == 'GOOGL': keywords.append('Alphabet'); keywords.append('Google')
                                     
+                                    found_action = False
+                                    actions_found = set()
+                                    
+                                    # Split text into lines for precise matching
+                                    lines = full_text.split('\n')
+                                    
+                                    # We need to check EACH keyword (e.g. NVDA, NVIDIA) against the lines
                                     for kw in keywords:
-                                        if kw in full_text:
-                                            # Determine Action
+                                        for line in lines:
+                                            if kw in line:
+                                                # Check specific line for Transaction Type (P/S) or Description keywords
+                                                if " P " in line or "Purchase" in line:
+                                                    actions_found.add("BUY")
+                                                elif " S " in line or "Sale" in line:
+                                                    actions_found.add("SELL")
+                                    
+                                    if actions_found:
+                                        if "BUY" in actions_found and "SELL" in actions_found:
+                                            action = "MIXED"
+                                        elif "SELL" in actions_found:
+                                            action = "SELL"
+                                        else:
                                             action = "BUY"
-                                            if "Sale" in full_text or " S " in full_text:
-                                                action = "SELL"
-                                                
-                                            # Store Signal
-                                            # e.g. [PELOSI BUY] (Jan 2026)
-                                            try:
-                                                dt = datetime.strptime(doc['date'], "%m/%d/%Y") # XML Date usually M/D/YYYY
-                                                date_fmt = dt.strftime("%b %Y")
-                                            except:
-                                                date_fmt = str(year)
-                                                
-                                            sig_txt = f"[{owner.upper()} {action}] ({date_fmt})"
+                                        
+                                        # Only write if we have a confirmable action
+                                        if not actions_found:
+                                            continue
+
+                                        # Store Signal
+                                        # e.g. [PELOSI BUY] (Jan 2026)
+                                        try:
+                                            dt = datetime.strptime(doc['date'], "%m/%d/%Y") # XML Date usually M/D/YYYY
+                                            date_fmt = dt.strftime("%b %Y")
+                                        except:
+                                            date_fmt = str(year)
                                             
-                                            # Prioritize recent (Overwrites older signals if found)
-                                            whale_signals[ticker] = sig_txt
+                                        sig_txt = f"[{owner.upper()} {action}] ({date_fmt})"
+                                        
+                                        # Prioritize recent (Overwrites older signals if found)
+                                        whale_signals[ticker] = sig_txt
                     except Exception as e:
                         print(f"   Error parsing PDF {pdf_url}: {e}")
 
